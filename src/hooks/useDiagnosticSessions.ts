@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase, hasSupabase } from '@/lib/supabase';
+import { useAppContext } from '@/contexts/AppContext';
 
 export interface DiagnosticSession {
   id: string;
@@ -36,11 +37,12 @@ function saveLocal(sessions: DiagnosticSession[]) {
  * panel still works in development.
  */
 export function useDiagnosticSessions() {
+  const { isAuthenticated, authLoading, authVersion } = useAppContext();
   const [sessions, setSessions] = useState<DiagnosticSession[]>([]);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (hasSupabase && supabase) {
+    if (hasSupabase && supabase && isAuthenticated) {
       setLoading(true);
       const { data, error } = await supabase
         .from('diagnostic_sessions')
@@ -53,12 +55,17 @@ export function useDiagnosticSessions() {
         return;
       }
     }
-    setSessions(loadLocal());
-  }, []);
+    if (!isAuthenticated) {
+      setSessions(loadLocal());
+    } else {
+      setSessions([]);
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    if (authLoading) return;
     refresh();
-  }, [refresh]);
+  }, [refresh, authLoading, authVersion]);
 
   const save = useCallback(
     async (s: Omit<DiagnosticSession, 'id' | 'created_at'> & { id?: string }) => {

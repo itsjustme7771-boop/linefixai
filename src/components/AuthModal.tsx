@@ -22,6 +22,7 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
   const [role, setRole] = useState<UserRole>('technician');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -33,6 +34,7 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
       setMode(initialMode);
       setSubmitting(false);
       setError(null);
+      setInfo(null);
     }
     wasOpen.current = open;
   }, [open, initialMode]);
@@ -60,13 +62,14 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
   const handleSignUp = async () => {
     const { error: err } = await signUpWithPassword(email, password, name, role);
     if (err) {
-      // Supabase returns messaging like "check your email" via error, surface nicely
-      setError(err);
       setSubmitting(false);
       if (err.toLowerCase().includes('check your email')) {
+        setError(null);
+        setInfo(err);
         toast.success(err);
-        onClose();
       } else {
+        setInfo(null);
+        setError(err);
         toast.error(err);
       }
       return;
@@ -100,6 +103,7 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
     e.stopPropagation();
     if (submitting) return;
     setError(null);
+    setInfo(null);
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) { toast.error('Please enter your email'); return; }
@@ -196,6 +200,12 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
             <button type="button" onClick={() => setMode('forgot')} className="text-xs text-[#00d4ff] hover:underline">
               Forgot password?
             </button>
+          )}
+
+          {info && (
+            <div className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded px-3 py-2">
+              {info}
+            </div>
           )}
 
           {error && (

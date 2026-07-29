@@ -104,7 +104,7 @@ async function streamFromEdge(opts: StreamOptions): Promise<StreamResult> {
 }
 
 function parseStreamChunk(chunk: string): string {
-  if (!chunk.includes('data:')) return chunk;
+  if (!chunk.includes('data:')) return '';
   let out = '';
   for (const line of chunk.split('\n')) {
     const trimmed = line.trim();
@@ -113,15 +113,23 @@ function parseStreamChunk(chunk: string): string {
     if (!payload || payload === '[DONE]') continue;
     try {
       const json = JSON.parse(payload);
-      const tok =
-        json.choices?.[0]?.delta?.content ??
-        json.delta?.text ??
-        json.content ??
-        json.token ??
-        '';
-      if (tok) out += tok;
+      // OpenAI SSE
+      const openai = json.choices?.[0]?.delta?.content;
+      if (typeof openai === 'string' && openai) {
+        out += openai;
+        continue;
+      }
+      // Anthropic SSE (content_block_delta)
+      const anthropic = json.delta?.text;
+      if (typeof anthropic === 'string' && anthropic) {
+        out += anthropic;
+        continue;
+      }
+      // Generic fallbacks
+      if (typeof json.content === 'string' && json.content) out += json.content;
+      else if (typeof json.token === 'string' && json.token) out += json.token;
     } catch {
-      out += payload;
+      // Ignore partial/malformed SSE frames split across TCP chunks
     }
   }
   return out;

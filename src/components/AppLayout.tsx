@@ -11,6 +11,7 @@ import AuthModal from './AuthModal';
 import QRScannerModal from './QRScannerModal';
 import SubscribeModal from './SubscribeModal';
 import { useAppContext } from '@/contexts/AppContext';
+import { hasSupabase, supabase } from '@/lib/supabase';
 import { toast } from '@/components/ui/sonner';
 
 const AppLayout: React.FC = () => {
@@ -18,11 +19,13 @@ const AppLayout: React.FC = () => {
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [scanOpen, setScanOpen] = useState(false);
   const [subscribeOpen, setSubscribeOpen] = useState(false);
+  const [saveCardSignal, setSaveCardSignal] = useState(0);
   const [subscribeTier, setSubscribeTier] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
 
   const pendingTierRef = useRef<string | null>(null);
-  const { isAuthenticated, user } = useAppContext();
+  const pendingSaveCardRef = useRef(false);
+  const { isAuthenticated, user, authLoading, refreshProfile } = useAppContext();
 
   const openAuth = (mode: 'signin' | 'signup') => { setAuthMode(mode); setAuthOpen(true); };
   const scrollTo = (id: string) => {
@@ -53,9 +56,19 @@ const AppLayout: React.FC = () => {
     const pending = pendingTierRef.current;
     pendingTierRef.current = null;
     if (pending) launchSubscribe(pending);
+
+    if (pendingSaveCardRef.current) {
+      pendingSaveCardRef.current = false;
+      setSaveCardSignal((n) => n + 1);
+    }
   };
 
-  // Show success toast if redirected back from Stripe (in case of 3DS redirects)
+  const requireAuthForSaveCard = () => {
+    pendingSaveCardRef.current = true;
+    openAuth('signin');
+  };
+
+  // Handle return URLs: Stripe checkout + Supabase email confirmation / password reset
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('checkout') === 'success') {
@@ -63,6 +76,32 @@ const AppLayout: React.FC = () => {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
+
+  useEffect(() => {
+    if (!hasSupabase || !supabase || authLoading) return;
+
+    const hash = window.location.hash.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+    const authType = hashParams.get('type');
+
+    if (authType === 'recovery') {
+      toast.info('Set a new password using the reset form when it appears.');
+      openAuth('signin');
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+
+    if (authType === 'signup' || authType === 'email' || authType === 'invite') {
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session?.user) {
+          toast.success('Email confirmed — you are signed in.');
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      });
+    }
+  }, [authLoading]);
 
   return (
     <div className="min-h-screen bg-[#0b1220] text-white">
@@ -74,7 +113,7 @@ const AppLayout: React.FC = () => {
       />
       <main>
         <Hero onScan={() => setScanOpen(true)} onDemo={() => scrollTo('diagnostic')} />
-        <DiagnosticDemo />
+        <DiagnosticDemo onRequireAuth={requireAuthForSaveCard} saveCardSignal={saveCardSignal} />
         <EquipmentLibrary onScan={() => setScanOpen(true)} />
         <CrossFixCards />
         <RoleTiers />
@@ -94,6 +133,7 @@ const AppLayout: React.FC = () => {
         onClose={() => { setSubscribeOpen(false); setSubscribeTier(null); }}
         tier={subscribeTier}
         email={user?.email || ''}
+        onSubscribed={() => { void refreshProfile(); }}
       />
     </div>
   );

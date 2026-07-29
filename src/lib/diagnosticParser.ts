@@ -11,10 +11,11 @@ export interface ParsedDiagnosis {
 }
 
 const SECTION_HEADERS = [
-  { key: 'safety', re: /^\s*1\.?\s*SAFETY FIRST/im },
-  { key: 'causes', re: /^\s*2\.?\s*TOP 3 PROBABLE CAUSES/im },
-  { key: 'checks', re: /^\s*3\.?\s*60-?SECOND CHECK/im },
-  { key: 'steps', re: /^\s*4\.?\s*STEP-?BY-?STEP RESOLUTION/im },
+  // Strict plant-floor format (OpenAI prompt) + markdown variants (Claude)
+  { key: 'safety', re: /^\s*(?:#{1,3}\s*)?1\.?\s*[—–-]?\s*SAFETY FIRST/im },
+  { key: 'causes', re: /^\s*(?:#{1,3}\s*)?2\.?\s*[—–-]?\s*(?:TOP\s*3\s*)?PROBABLE CAUSES/im },
+  { key: 'checks', re: /^\s*(?:#{1,3}\s*)?3\.?\s*[—–-]?\s*60-?\s*SECOND CHECK/im },
+  { key: 'steps', re: /^\s*(?:#{1,3}\s*)?4\.?\s*[—–-]?\s*STEP-?\s*BY-?\s*STEP(?:\s*RESOLUTION)?/im },
   { key: 'feedback', re: /Did this fix the issue/im },
 ] as const;
 
@@ -42,6 +43,9 @@ function cleanBullet(line: string): string {
   return line
     .replace(/^\s*[-*•■]\s*/, '')
     .replace(/^\s*\d+[.)]\s*/, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/^#{1,6}\s*/, '')
     .trim();
 }
 

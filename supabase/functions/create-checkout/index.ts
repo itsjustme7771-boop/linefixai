@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsPreflight, jsonResponse } from '../_shared/cors.ts';
 
 const TIER_PRICES: Record<string, string | undefined> = {
@@ -17,6 +18,34 @@ function stripeClient(): Stripe {
 function stripeOpts(): { stripeAccount?: string } {
   const account = Deno.env.get('STRIPE_ACCOUNT_ID');
   return account ? { stripeAccount: account } : {};
+}
+
+function adminClient() {
+  const url = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
+async function syncProfileSubscription(
+  email: string,
+  tier: string,
+  customerId: string,
+  subscriptionId: string,
+  status: string,
+) {
+  const sb = adminClient();
+  if (!sb) return;
+  await sb
+    .from('profiles')
+    .update({
+      subscription_tier: tier.toLowerCase(),
+      subscription_status: status,
+      stripe_customer_id: customerId,
+      stripe_subscription_id: subscriptionId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('email', email);
 }
 
 Deno.serve(async (req) => {
@@ -95,7 +124,19 @@ Deno.serve(async (req) => {
         opts,
       );
 
-      return jsonResponse({ subscriptionId: subscription.id, status: subscription.status });
+      await syncProfileSubscription(
+        email,
+        String(tier).toLowerCase(),
+        customerId,
+        subscription.id,
+        subscription.status,
+      );
+
+      return jsonResponse({
+        subscriptionId: subscription.id,
+        status: subscription.status,
+        tier: String(tier).toLowerCase(),
+      });
     }
 
     return jsonResponse({ error: `Unknown action: ${action}` }, 400);

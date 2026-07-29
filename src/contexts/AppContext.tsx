@@ -14,11 +14,24 @@ export interface ActiveEquipment {
   plant?: string;
 }
 
+export type SubscriptionTier = 'basic' | 'advanced' | 'premium';
+
 export interface AuthUser {
   id?: string;
   email: string;
   name: string;
   role: UserRole;
+  subscriptionTier?: SubscriptionTier | null;
+  subscriptionStatus?: string | null;
+}
+
+export interface AppliedCrossFix {
+  title: string;
+  symptoms: string;
+  solution: string;
+  equipmentId?: string | null;
+  equipmentName?: string | null;
+  plant?: string | null;
 }
 
 interface AppContextType {
@@ -26,6 +39,9 @@ interface AppContextType {
   toggleSidebar: () => void;
   activeEquipment: ActiveEquipment | null;
   setActiveEquipment: (eq: ActiveEquipment | null) => void;
+  appliedCrossFix: AppliedCrossFix | null;
+  applyCrossFix: (fix: AppliedCrossFix) => void;
+  clearAppliedCrossFix: () => void;
   role: UserRole;
   setRole: (r: UserRole) => void;
   userName: string;
@@ -34,12 +50,15 @@ interface AppContextType {
   isAuthenticated: boolean;
   user: AuthUser | null;
   authLoading: boolean;
+  /** Bumps when auth user id changes — use as a dependency to refetch user-scoped data */
+  authVersion: number;
   // Local-only fallback (when no Supabase configured)
   signInLocal: (email: string, role: UserRole, name?: string) => void;
   // Supabase-backed auth. Returns { error } on failure.
   signInWithPassword: (email: string, password: string) => Promise<{ error?: string }>;
   signUpWithPassword: (email: string, password: string, name: string, role: UserRole) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const defaultAppContext: AppContextType = {
@@ -47,16 +66,21 @@ const defaultAppContext: AppContextType = {
   toggleSidebar: () => {},
   activeEquipment: null,
   setActiveEquipment: () => {},
+  appliedCrossFix: null,
+  applyCrossFix: () => {},
+  clearAppliedCrossFix: () => {},
   role: 'lead',
   setRole: () => {},
   userName: 'Demo Lead',
   isAuthenticated: false,
   user: null,
   authLoading: true,
+  authVersion: 0,
   signInLocal: () => {},
   signInWithPassword: async () => ({ error: 'Not configured' }),
   signUpWithPassword: async () => ({ error: 'Not configured' }),
   signOut: async () => {},
+  refreshProfile: async () => {},
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
@@ -69,7 +93,9 @@ const ROLE_KEY = 'mttr.role';
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeEquipment, setActiveEquipmentState] = useState<ActiveEquipment | null>(null);
+  const [appliedCrossFix, setAppliedCrossFix] = useState<AppliedCrossFix | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(hasSupabase);
+  const [authVersion, setAuthVersion] = useState(0);
 
   const [user, setUser] = useState<AuthUser | null>(() => {
     try {
@@ -102,37 +128,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     let mounted = true;
 
+    const applyUser = (next: AuthUser) => {
+      if (!mounted) return;
+      setUser(next);
+      setAuthVersion(v => v + 1);
+      try { localStorage.setItem(USER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    };
+
     const loadProfile = async (uid: string, fallbackEmail: string, fallbackName?: string, fallbackRole?: UserRole) => {
+      const email = fallbackEmail.trim();
+      const name = fallbackName?.trim() || email.split('@')[0] || 'User';
+      const roleFallback = fallbackRole || 'technician';
+
       try {
         const { data } = await supabase!
           .from('profiles')
-          .select('id,email,name,role')
+          .select('id,email,name,role,subscription_tier,subscription_status')
           .eq('id', uid)
           .maybeSingle();
-        if (data && mounted) {
-          const next: AuthUser = {
+
+        if (data) {
+          applyUser({
             id: data.id,
-            email: data.email,
-            name: data.name || fallbackName || fallbackEmail.split('@')[0],
-            role: (data.role as UserRole) || fallbackRole || 'technician',
-          };
-          setUser(next);
-          try { localStorage.setItem(USER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+            email: data.email || email,
+            name: data.name || name,
+            role: (data.role as UserRole) || roleFallback,
+            subscriptionTier: data.subscription_tier as SubscriptionTier | null,
+            subscriptionStatus: data.subscription_status,
+          });
+          return;
+        }
+
+        // Profile missing (pre-trigger account or race) — create it
+        const { data: created } = await supabase!
+          .from('profiles')
+          .upsert({ id: uid, email, name, role: roleFallback }, { onConflict: 'id' })
+          .select('id,email,name,role,subscription_tier,subscription_status')
+          .maybeSingle();
+
+        if (created) {
+          applyUser({
+            id: created.id,
+            email: created.email || email,
+            name: created.name || name,
+            role: (created.role as UserRole) || roleFallback,
+            subscriptionTier: created.subscription_tier as SubscriptionTier | null,
+            subscriptionStatus: created.subscription_status,
+          });
           return;
         }
       } catch { /* ignore */ }
 
-      // Fallback if profile row isn't readable yet
-      if (mounted) {
-        const next: AuthUser = {
-          id: uid,
-          email: fallbackEmail,
-          name: fallbackName || fallbackEmail.split('@')[0],
-          role: fallbackRole || 'technician',
-        };
-        setUser(next);
-        try { localStorage.setItem(USER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      }
+      applyUser({ id: uid, email, name, role: roleFallback });
     };
 
     supabase.auth.getSession().then(({ data }) => {
@@ -144,12 +191,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (mounted) setAuthLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
-        const meta = (session.user.user_metadata || {}) as any;
-        loadProfile(session.user.id, session.user.email || '', meta.name, meta.role as UserRole);
-      } else {
+        const meta = (session.user.user_metadata || {}) as Record<string, unknown>;
+        loadProfile(
+          session.user.id,
+          session.user.email || '',
+          typeof meta.name === 'string' ? meta.name : undefined,
+          meta.role as UserRole | undefined,
+        );
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
+        setAuthVersion(v => v + 1);
         try { localStorage.removeItem(USER_KEY); } catch { /* ignore */ }
       }
     });
@@ -162,6 +215,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setActiveEquipment = useCallback((eq: ActiveEquipment | null) => {
     setActiveEquipmentState(eq);
   }, []);
+
+  const applyCrossFix = useCallback((fix: AppliedCrossFix) => {
+    setAppliedCrossFix(fix);
+    if (fix.equipmentId && fix.equipmentName) {
+      setActiveEquipmentState({
+        id: fix.equipmentId,
+        name: fix.equipmentName,
+        plant: fix.plant ?? undefined,
+        location: fix.plant ?? undefined,
+      });
+    }
+  }, []);
+
+  const clearAppliedCrossFix = useCallback(() => setAppliedCrossFix(null), []);
 
   const setRole = useCallback((r: UserRole) => {
     setRoleState(r);
@@ -188,7 +255,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Load profile to get role/name
       const { data: profile } = await supabase
         .from('profiles')
-        .select('id,email,name,role')
+        .select('id,email,name,role,subscription_tier,subscription_status')
         .eq('id', data.user.id)
         .maybeSingle();
       const meta = (data.user.user_metadata || {}) as any;
@@ -197,6 +264,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         email: data.user.email || email.trim(),
         name: profile?.name || meta.name || (data.user.email || email).split('@')[0],
         role: (profile?.role as UserRole) || (meta.role as UserRole) || 'technician',
+        subscriptionTier: profile?.subscription_tier as SubscriptionTier | null,
+        subscriptionStatus: profile?.subscription_status,
       };
       setUser(next);
       setRoleState(next.role);
@@ -254,6 +323,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try { localStorage.removeItem(USER_KEY); } catch { /* ignore */ }
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    if (!supabase || !user?.id) return;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id,email,name,role,subscription_tier,subscription_status')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (!profile) return;
+    const next: AuthUser = {
+      id: profile.id,
+      email: profile.email || user.email,
+      name: profile.name || user.name,
+      role: (profile.role as UserRole) || user.role,
+      subscriptionTier: profile.subscription_tier as SubscriptionTier | null,
+      subscriptionStatus: profile.subscription_status,
+    };
+    setUser(next);
+    setRoleState(next.role);
+    try { localStorage.setItem(USER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    setAuthVersion(v => v + 1);
+  }, [user?.id, user?.email, user?.name, user?.role]);
+
   const userName = user?.name || (role === 'management' ? 'S. Williams' : role === 'lead' ? 'M. Rodriguez' : 'T. Patel');
 
   return (
@@ -263,16 +354,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleSidebar,
         activeEquipment,
         setActiveEquipment,
+        appliedCrossFix,
+        applyCrossFix,
+        clearAppliedCrossFix,
         role,
         setRole,
         userName,
         isAuthenticated: !!user,
         user,
         authLoading,
+        authVersion,
         signInLocal,
         signInWithPassword,
         signUpWithPassword,
         signOut,
+        refreshProfile,
       }}
     >
       {children}

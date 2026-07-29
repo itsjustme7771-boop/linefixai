@@ -105,9 +105,10 @@ interface SubscribeModalProps {
   onClose: () => void;
   tier: string | null;
   email: string;
+  onSubscribed?: () => void;
 }
 
-const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, email }) => {
+const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, email, onSubscribed }) => {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -131,7 +132,9 @@ const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, em
           throw new Error('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env to enable checkout');
         }
         if (!hasStripeConfig) {
-          throw new Error('Add VITE_STRIPE_PUBLISHABLE_KEY to .env to enable checkout');
+          throw new Error(
+            'Stripe is not configured. Run: bash scripts/setup-stripe.sh — then restart npm run dev',
+          );
         }
         const { data, error } = await supabase.functions.invoke('create-checkout', {
           body: { action: 'create-setup-intent', tier: tierKey, email, name: email.split('@')[0] },
@@ -185,7 +188,10 @@ const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, em
               customerId={customerId}
               tier={tierKey}
               email={email}
-              onSuccess={() => setSuccess(true)}
+              onSuccess={() => {
+                setSuccess(true);
+                onSubscribed?.();
+              }}
               onCancel={onClose}
             />
           </Elements>
