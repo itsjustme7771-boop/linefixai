@@ -1,22 +1,19 @@
-import path from "path";
-import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react-swc";
+import path from "path";
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
+// https://vitejs.dev/config/
+export default defineConfig(({ mode }) => ({
+  server: {
+    host: "::",
+    port: 8080,
+  },
+  plugins: [
+    react()
+  ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  server: {
-    port: process.env.PORT ? parseInt(process.env.PORT, 10) : 5173,
-    strictPort: true,
-    hmr: false,
-  },
-  build: {
-    outDir: "dist",
-    emptyOutDir: true,
-  },
-});
+}));
