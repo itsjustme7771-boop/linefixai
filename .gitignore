@@ -11,17 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
-
-# Secrets & local config
-.env
-.env.local
-.env.*.local
-
-# Supabase CLI local cache
-supabase/.temp/
-
-# Builder exports / archives
-*.zip
+.vercel
 
 # Editor directories and files
 .vscode/*

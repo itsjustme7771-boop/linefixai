@@ -19,12 +19,7 @@ const presets = [
   'Robotic arm stuck at home position, ER-214',
 ];
 
-interface DiagnosticDemoProps {
-  onRequireAuth?: () => void;
-  saveCardSignal?: number;
-}
-
-const DiagnosticDemo: React.FC<DiagnosticDemoProps> = ({ onRequireAuth, saveCardSignal = 0 }) => {
+const DiagnosticDemo: React.FC = () => {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [rawText, setRawText] = useState('');
@@ -38,34 +33,27 @@ const DiagnosticDemo: React.FC<DiagnosticDemoProps> = ({ onRequireAuth, saveCard
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement | null>(null);
 
-  const { activeEquipment, setActiveEquipment, appliedCrossFix, clearAppliedCrossFix, isAuthenticated } = useAppContext();
+  const { activeEquipment, setActiveEquipment, isAuthenticated } = useAppContext();
   const { sessions, save, updateOutcome } = useDiagnosticSessions();
   const parsed = useMemo(() => (rawText ? parseDiagnosis(rawText) : null), [rawText]);
-  const hasStructuredOutput = Boolean(
-    parsed && (parsed.safety.length || parsed.causes.length || parsed.checks.length || parsed.steps.length),
-  );
 
   useEffect(() => {
     if (streaming && outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [rawText, streaming]);
 
   useEffect(() => {
-    if (saveCardSignal > 0) setSaveCardOpen(true);
-  }, [saveCardSignal]);
+    if (!hasSupabase || isAuthenticated) return;
 
-  useEffect(() => {
-    if (!appliedCrossFix) return;
-    setInput(appliedCrossFix.symptoms);
-    setRawText(
-      [
-        appliedCrossFix.solution ? `Applied fix: ${appliedCrossFix.title}\n\n${appliedCrossFix.solution}` : '',
-      ].filter(Boolean).join('\n\n'),
-    );
-    setSource('llm');
+    abortRef.current?.abort();
+    setInput('');
+    setRawText('');
+    setChecks({});
+    setSteps({});
+    setSource(null);
     setCurrentSessionId(null);
-    clearAppliedCrossFix();
-    toast.info(`Loaded Cross-Fix: ${appliedCrossFix.title}`);
-  }, [appliedCrossFix, clearAppliedCrossFix]);
+    setHistoryOpen(false);
+    setSaveCardOpen(false);
+  }, [isAuthenticated]);
 
   const run = async (q?: string) => {
     const query = (q || input).trim();
@@ -95,9 +83,9 @@ const DiagnosticDemo: React.FC<DiagnosticDemoProps> = ({ onRequireAuth, saveCard
           ? `AI diagnosis complete${activeEquipment ? ` for ${activeEquipment.id}` : ''} — session saved`
           : 'Demo mode — configure Supabase for live AI',
       );
-    } catch (err: any) {
-      if (err?.name === 'AbortError') toast('Stream stopped');
-      else { console.error(err); toast.error(err?.message || 'Diagnostic failed'); }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') toast('Stream stopped');
+      else { console.error(err); toast.error(err instanceof Error ? err.message : 'Diagnostic failed'); }
     } finally {
       setStreaming(false);
       abortRef.current = null;
@@ -113,15 +101,6 @@ const DiagnosticDemo: React.FC<DiagnosticDemoProps> = ({ onRequireAuth, saveCard
     setSource('llm');
     setHistoryOpen(false);
     setTimeout(() => { document.getElementById('diagnostic')?.scrollIntoView({ behavior: 'smooth' }); }, 50);
-  };
-
-  const openSaveCard = () => {
-    if (hasSupabase && !isAuthenticated) {
-      toast.info('Sign in to save Cross-Fix Cards');
-      onRequireAuth?.();
-      return;
-    }
-    setSaveCardOpen(true);
   };
 
   const markOutcome = async (outcome: 'fixed' | 'refine') => {
@@ -297,83 +276,75 @@ const DiagnosticDemo: React.FC<DiagnosticDemoProps> = ({ onRequireAuth, saveCard
                   <div className="text-slate-500">{rawText.length} chars</div>
                 </div>
 
-                {hasStructuredOutput || streaming ? (
-                  <>
-                    <div className="bg-gradient-to-r from-[#ff6b35] to-[#ff8555] px-5 py-3 flex items-center gap-2">
-                      <AlertTriangle className="w-5 h-5 text-white" />
-                      <span className="font-bold text-white uppercase tracking-wider text-sm">1. Safety First</span>
-                    </div>
-                    <div className="p-5 border-b border-white/10">
-                      {parsed && parsed.safety.length > 0 ? (
-                        <ul className="text-sm text-slate-200 space-y-1.5">
-                          {parsed.safety.map((line, i) => (
-                            <li key={i} className="flex gap-2"><span className="text-[#ff6b35] shrink-0">■</span><span>{line}</span></li>
-                          ))}
-                        </ul>
-                      ) : (<SkeletonLines n={4} />)}
-                    </div>
+                <div className="bg-gradient-to-r from-[#ff6b35] to-[#ff8555] px-5 py-3 flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-white" />
+                  <span className="font-bold text-white uppercase tracking-wider text-sm">1. Safety First</span>
+                </div>
+                <div className="p-5 border-b border-white/10">
+                  {parsed && parsed.safety.length > 0 ? (
+                    <ul className="text-sm text-slate-200 space-y-1.5">
+                      {parsed.safety.map((line, i) => (
+                        <li key={i} className="flex gap-2"><span className="text-[#ff6b35] shrink-0">■</span><span>{line}</span></li>
+                      ))}
+                    </ul>
+                  ) : (<SkeletonLines n={4} />)}
+                </div>
 
-                    <div className="px-5 py-4 border-b border-white/10">
-                      <div className="text-xs font-mono uppercase tracking-widest text-[#00d4ff] mb-3">2. Top 3 Probable Causes</div>
-                      {parsed && parsed.causes.length > 0 ? parsed.causes.map(c => (
-                        <div key={c.rank} className="flex gap-3 py-2">
-                          <div className="w-7 h-7 rounded-full bg-[#ff6b35] text-white font-bold flex items-center justify-center text-sm shrink-0">{c.rank}</div>
-                          <div>
-                            <div className="text-white font-semibold text-sm">{c.label}</div>
-                            {c.detail && <div className="text-slate-400 text-xs mt-0.5">{c.detail}</div>}
-                          </div>
-                        </div>
-                      )) : (<SkeletonLines n={3} />)}
+                <div className="px-5 py-4 border-b border-white/10">
+                  <div className="text-xs font-mono uppercase tracking-widest text-[#00d4ff] mb-3">2. Most Likely Causes</div>
+                  {parsed && parsed.causes.length > 0 ? parsed.causes.map(c => (
+                    <div key={c.rank} className="flex gap-3 py-2">
+                      <div className="w-7 h-7 rounded-full bg-[#ff6b35] text-white font-bold flex items-center justify-center text-sm shrink-0">{c.rank}</div>
+                      <div>
+                        <div className="text-white font-semibold text-sm">{c.label}</div>
+                        {c.detail && <div className="text-slate-400 text-xs mt-0.5">{c.detail}</div>}
+                      </div>
                     </div>
+                  )) : (<SkeletonLines n={3} />)}
+                </div>
 
-                    <div className="px-5 py-4 border-b border-white/10">
-                      <div className="text-xs font-mono uppercase tracking-widest text-[#00d4ff] mb-3">3. 60-Second Check — No Tools</div>
-                      {parsed && parsed.checks.length > 0 ? (
-                        <div className="grid sm:grid-cols-2 gap-2">
-                          {parsed.checks.map((label, i) => (
-                            <button key={i} onClick={() => setChecks({ ...checks, [label]: !checks[label] })}
-                              className={`flex items-start gap-2 text-left text-xs px-3 py-2 rounded border transition-colors ${
-                                checks[label] ? 'bg-[#00d4ff]/10 border-[#00d4ff]/40 text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                              }`}>
-                              {checks[label] ? <CheckCircle2 className="w-4 h-4 text-[#00d4ff] shrink-0 mt-0.5" /> : <Circle className="w-4 h-4 shrink-0 mt-0.5" />}
-                              <span>{label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (<SkeletonLines n={3} />)}
+                <div className="px-5 py-4 border-b border-white/10">
+                  <div className="text-xs font-mono uppercase tracking-widest text-[#00d4ff] mb-3">3. Fast Checks</div>
+                  {parsed && parsed.checks.length > 0 ? (
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {parsed.checks.map((label, i) => (
+                        <button key={i} onClick={() => setChecks({ ...checks, [label]: !checks[label] })}
+                          className={`flex items-start gap-2 text-left text-xs px-3 py-2 rounded border transition-colors ${
+                            checks[label] ? 'bg-[#00d4ff]/10 border-[#00d4ff]/40 text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                          }`}>
+                          {checks[label] ? <CheckCircle2 className="w-4 h-4 text-[#00d4ff] shrink-0 mt-0.5" /> : <Circle className="w-4 h-4 shrink-0 mt-0.5" />}
+                          <span>{label}</span>
+                        </button>
+                      ))}
                     </div>
+                  ) : (<SkeletonLines n={3} />)}
+                </div>
 
-                    <div className="px-5 py-4">
-                      <div className="text-xs font-mono uppercase tracking-widest text-[#00d4ff] mb-3">4. Step-by-Step Resolution</div>
-                      {parsed && parsed.steps.length > 0 ? (
-                        <ol className="space-y-1">
-                          {parsed.steps.map((s, i) => (
-                            <li key={i}>
-                              <button onClick={() => setSteps({ ...steps, [i]: !steps[i] })} className="w-full flex items-start gap-3 text-left p-2 rounded hover:bg-white/5 transition-colors">
-                                <span className={`w-6 h-6 rounded shrink-0 flex items-center justify-center text-xs font-bold mt-0.5 ${steps[i] ? 'bg-[#00d4ff] text-[#0b1220]' : 'bg-white/10 text-slate-300'}`}>
-                                  {steps[i] ? '✓' : i + 1}
-                                </span>
-                                <span className={`text-sm ${steps[i] ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{s}</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ol>
-                      ) : (<SkeletonLines n={5} />)}
-                    </div>
-                  </>
-                ) : (
-                  <div className="p-5">
-                    <pre className="text-sm text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">{rawText}</pre>
-                  </div>
-                )}
+                <div className="px-5 py-4">
+                  <div className="text-xs font-mono uppercase tracking-widest text-[#00d4ff] mb-3">4. Step-by-Step Resolution</div>
+                  {parsed && parsed.steps.length > 0 ? (
+                    <ol className="space-y-1">
+                      {parsed.steps.map((s, i) => (
+                        <li key={i}>
+                          <button onClick={() => setSteps({ ...steps, [i]: !steps[i] })} className="w-full flex items-start gap-3 text-left p-2 rounded hover:bg-white/5 transition-colors">
+                            <span className={`w-6 h-6 rounded shrink-0 flex items-center justify-center text-xs font-bold mt-0.5 ${steps[i] ? 'bg-[#00d4ff] text-[#0b1220]' : 'bg-white/10 text-slate-300'}`}>
+                              {steps[i] ? '✓' : i + 1}
+                            </span>
+                            <span className={`text-sm ${steps[i] ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{s}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (<SkeletonLines n={5} />)}
+                </div>
 
-                {!streaming && rawText && (
+                {!streaming && parsed && (
                   <div className="bg-[#0b1220] px-5 py-4 border-t border-white/10">
                     <div className="text-sm text-slate-300 mb-2 font-semibold">Did this fix the issue?</div>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => markOutcome('fixed')} className="bg-[#00d4ff] text-[#0b1220] hover:bg-[#33ddff] font-semibold">Yes — Fixed</Button>
                       <Button size="sm" variant="outline" onClick={() => markOutcome('refine')} className="border-white/20 text-slate-200 hover:bg-white/5">No — Refine</Button>
-                      <Button size="sm" onClick={openSaveCard} className="bg-[#ff6b35] hover:bg-[#ff8555] text-white font-semibold">
+                      <Button size="sm" onClick={() => setSaveCardOpen(true)} className="bg-[#ff6b35] hover:bg-[#ff8555] text-white font-semibold">
                         <BookmarkPlus className="w-3.5 h-3.5 mr-1.5" /> Save as Cross-Fix Card
                       </Button>
                       {source && (<span className="ml-auto text-[10px] font-mono text-slate-500 self-center">{source === 'llm' ? 'LLM · session saved' : 'MOCK · demo mode'}</span>)}

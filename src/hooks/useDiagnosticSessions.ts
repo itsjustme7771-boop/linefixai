@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase, hasSupabase } from '@/lib/supabase';
-import { useAppContext } from '@/contexts/AppContext';
+import { supabase, hasSupabase, requireLineFixActor } from '@/lib/supabase';
 
 export interface DiagnosticSession {
   id: string;
@@ -37,12 +36,11 @@ function saveLocal(sessions: DiagnosticSession[]) {
  * panel still works in development.
  */
 export function useDiagnosticSessions() {
-  const { isAuthenticated, authLoading, authVersion } = useAppContext();
   const [sessions, setSessions] = useState<DiagnosticSession[]>([]);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (hasSupabase && supabase && isAuthenticated) {
+    if (hasSupabase && supabase) {
       setLoading(true);
       const { data, error } = await supabase
         .from('diagnostic_sessions')
@@ -55,17 +53,27 @@ export function useDiagnosticSessions() {
         return;
       }
     }
-    if (!isAuthenticated) {
-      setSessions(loadLocal());
-    } else {
-      setSessions([]);
-    }
-  }, [isAuthenticated]);
+    setSessions(loadLocal());
+  }, []);
 
   useEffect(() => {
-    if (authLoading) return;
     refresh();
-  }, [refresh, authLoading, authVersion]);
+
+    if (!hasSupabase || !supabase) return;
+
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        // Do not leave the previous technician's history visible in memory
+        // after their authenticated session ends.
+        setSessions([]);
+        return;
+      }
+
+      void refresh();
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, [refresh]);
 
   const save = useCallback(
     async (s: Omit<DiagnosticSession, 'id' | 'created_at'> & { id?: string }) => {
@@ -88,9 +96,12 @@ export function useDiagnosticSessions() {
             .update({ outcome: s.outcome })
             .eq('id', s.id);
         } else {
+          const actor = await requireLineFixActor();
           const { data } = await supabase
             .from('diagnostic_sessions')
             .insert({
+              organization_id: actor.organizationId,
+              user_id: actor.userId,
               issue: s.issue,
               equipment_id: s.equipment_id,
               response: s.response,

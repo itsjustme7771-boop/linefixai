@@ -1,4 +1,4 @@
-import { DIAGNOSE_FN_URL, hasSupabase, supabase, SUPABASE_ANON } from './supabase';
+import { DIAGNOSE_FN_URL, hasSupabase, supabase } from './supabase';
 
 // Fallback mock response used when no edge function is configured. Matches the
 // strict response format so the UI parser works identically in both paths.
@@ -62,18 +62,18 @@ export async function streamDiagnosis(opts: StreamOptions): Promise<StreamResult
 }
 
 async function streamFromEdge(opts: StreamOptions): Promise<StreamResult> {
-  const { issue, equipmentId, signal } = opts;
-  const anon = SUPABASE_ANON;
-  const session = supabase ? (await supabase.auth.getSession()).data.session : null;
-  const authToken = session?.access_token ?? anon;
+  const { issue, equipmentId, onToken, signal } = opts;
+  if (!supabase) throw new Error('LineFix backend is not configured');
+  const { data, error } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (error || !accessToken) throw new Error('Please sign in to start a diagnosis');
 
   const res = await fetch(DIAGNOSE_FN_URL as string, {
     method: 'POST',
     signal,
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${authToken}`,
-      apikey: anon,
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ issue, equipmentId }),
   });
@@ -104,7 +104,7 @@ async function streamFromEdge(opts: StreamOptions): Promise<StreamResult> {
 }
 
 function parseStreamChunk(chunk: string): string {
-  if (!chunk.includes('data:')) return '';
+  if (!chunk.includes('data:')) return chunk;
   let out = '';
   for (const line of chunk.split('\n')) {
     const trimmed = line.trim();
@@ -113,23 +113,15 @@ function parseStreamChunk(chunk: string): string {
     if (!payload || payload === '[DONE]') continue;
     try {
       const json = JSON.parse(payload);
-      // OpenAI SSE
-      const openai = json.choices?.[0]?.delta?.content;
-      if (typeof openai === 'string' && openai) {
-        out += openai;
-        continue;
-      }
-      // Anthropic SSE (content_block_delta)
-      const anthropic = json.delta?.text;
-      if (typeof anthropic === 'string' && anthropic) {
-        out += anthropic;
-        continue;
-      }
-      // Generic fallbacks
-      if (typeof json.content === 'string' && json.content) out += json.content;
-      else if (typeof json.token === 'string' && json.token) out += json.token;
+      const tok =
+        json.choices?.[0]?.delta?.content ??
+        json.delta?.text ??
+        json.content ??
+        json.token ??
+        '';
+      if (tok) out += tok;
     } catch {
-      // Ignore partial/malformed SSE frames split across TCP chunks
+      out += payload;
     }
   }
   return out;

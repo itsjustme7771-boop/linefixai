@@ -9,8 +9,8 @@ import { hasSupabase } from '@/lib/supabase';
 const CrossFixCards: React.FC = () => {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'approved' | 'pending'>('approved');
-  const { cards, approve, upvote, live } = useCrossFixCards();
-  const { role, userName, isAuthenticated, applyCrossFix } = useAppContext();
+  const { cards, live, approve, upvote } = useCrossFixCards();
+  const { role, userName } = useAppContext();
   const canApprove = role === 'lead' || role === 'management';
 
   const filtered = useMemo(() => {
@@ -24,27 +24,6 @@ const CrossFixCards: React.FC = () => {
 
   const pendingCount = cards.filter(c => c.status === 'pending').length;
 
-  const handleApply = (c: (typeof cards)[number]) => {
-    applyCrossFix({
-      title: c.title,
-      symptoms: c.symptoms || c.title,
-      solution: c.solution || '',
-      equipmentId: c.equipment_id,
-      equipmentName: c.equipment_name,
-      plant: c.plant,
-    });
-    document.getElementById('diagnostic')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    toast.success(`Applied "${c.title}" to Diagnostic Engine`);
-  };
-
-  const handleUpvote = async (id: string) => {
-    try {
-      await upvote(id);
-    } catch (err: any) {
-      toast.error(err?.message || 'Could not upvote');
-    }
-  };
-
   return (
     <section id="crossfix" className="py-20 bg-[#0b1220]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -52,10 +31,7 @@ const CrossFixCards: React.FC = () => {
           <div>
             <div className="text-[#00d4ff] text-xs font-mono uppercase tracking-widest mb-3">03 — Cross-Fix Network</div>
             <h2 className="text-3xl lg:text-4xl font-black text-white tracking-tight">Knowledge that moves at the speed of your line.</h2>
-            <p className="mt-2 text-slate-400 max-w-2xl">Every approved fix syncs to every plant in real time. Run a diagnosis, save it as a card, and leads approve it for the whole network.</p>
-            {!isAuthenticated && hasSupabase && (
-              <p className="mt-2 text-xs text-amber-300 font-mono">Sign in to submit cards or mark fixes as helpful.</p>
-            )}
+            <p className="mt-2 text-slate-400 max-w-2xl">Every approved fix syncs to every plant in real time via database Realtime. A tech in Texas solves it at 2am, a lead in Ohio uses it at 6am.</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => toast('Lead/Management only — upload PDFs, manuals, schematics')} className="border-white/20 text-white bg-white/5 hover:bg-white/10">
@@ -163,27 +139,20 @@ const CrossFixCards: React.FC = () => {
               </div>
 
               <div className="border-t border-white/5 px-4 py-2 flex justify-between items-center">
-                <button onClick={() => handleUpvote(c.id)} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#00d4ff] transition-colors">
+                <button onClick={() => upvote(c.id)} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#00d4ff] transition-colors">
                   <ThumbsUp className="w-3.5 h-3.5" />
                   <span className="font-semibold">{c.helpful}</span>
                   <span>helpful</span>
                 </button>
                 {c.status === 'pending' && canApprove ? (
                   <button
-                    onClick={async () => {
-                      try {
-                        await approve(c.id, userName);
-                        toast.success('Card approved & synced to all plants');
-                      } catch (err: any) {
-                        toast.error(err?.message || 'Could not approve card');
-                      }
-                    }}
+                    onClick={async () => { await approve(c.id, userName); toast.success('Card approved & synced to all plants'); }}
                     className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1"
                   >
                     <ShieldCheck className="w-3.5 h-3.5" /> Approve
                   </button>
                 ) : (
-                  <button onClick={() => handleApply(c)} className="text-xs text-[#ff6b35] hover:text-[#ff8555] font-semibold">
+                  <button onClick={() => toast.success('Card applied to active diagnostic')} className="text-xs text-[#ff6b35] hover:text-[#ff8555] font-semibold">
                     Apply →
                   </button>
                 )}

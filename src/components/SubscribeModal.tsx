@@ -4,16 +4,17 @@ import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { hasSupabase, supabase } from '@/lib/supabase';
-import { env, hasStripeConfig } from '@/lib/env';
+import { supabase } from '@/lib/supabase';
 import { toast } from '@/components/ui/sonner';
+
+const STRIPE_ACCOUNT_ID = 'acct_1TNUl6QjNZrU06Fo';
+const PUBLISHABLE_KEY =
+  'pk_live_51OJhJBHdGQpsHqInIzu7c6PzGPSH0yImD4xfpofvxvFZs0VFhPRXZCyEgYkkhOtBOXFWvssYASs851mflwQvjnrl00T6DbUwWZ';
 
 let stripePromise: Promise<Stripe | null> | null = null;
 const getStripe = () => {
-  if (!hasStripeConfig || !env.stripePublishableKey) return Promise.resolve(null);
   if (!stripePromise) {
-    const opts = env.stripeAccountId ? { stripeAccount: env.stripeAccountId } : undefined;
-    stripePromise = loadStripe(env.stripePublishableKey, opts);
+    stripePromise = loadStripe(PUBLISHABLE_KEY, { stripeAccount: STRIPE_ACCOUNT_ID });
   }
   return stripePromise;
 };
@@ -55,7 +56,6 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ customerId, tier, email, onSu
         return;
       }
       if (setupIntent?.status === 'succeeded') {
-        if (!supabase) throw new Error('Payments require Supabase configuration');
         const { data, error: subErr } = await supabase.functions.invoke('create-checkout', {
           body: { action: 'activate-subscription', customerId, tier, email },
         });
@@ -105,10 +105,9 @@ interface SubscribeModalProps {
   onClose: () => void;
   tier: string | null;
   email: string;
-  onSubscribed?: () => void;
 }
 
-const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, email, onSubscribed }) => {
+const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, email }) => {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -128,14 +127,6 @@ const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, em
 
     (async () => {
       try {
-        if (!hasSupabase || !supabase) {
-          throw new Error('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env to enable checkout');
-        }
-        if (!hasStripeConfig) {
-          throw new Error(
-            'Stripe is not configured. Run: bash scripts/setup-stripe.sh — then restart npm run dev',
-          );
-        }
         const { data, error } = await supabase.functions.invoke('create-checkout', {
           body: { action: 'create-setup-intent', tier: tierKey, email, name: email.split('@')[0] },
         });
@@ -188,17 +179,14 @@ const SubscribeModal: React.FC<SubscribeModalProps> = ({ open, onClose, tier, em
               customerId={customerId}
               tier={tierKey}
               email={email}
-              onSuccess={() => {
-                setSuccess(true);
-                onSubscribed?.();
-              }}
+              onSuccess={() => setSuccess(true)}
               onCancel={onClose}
             />
           </Elements>
         ) : null}
 
         <div className="text-[10px] text-slate-500 font-mono text-center pt-2 border-t border-white/10">
-          SECURED BY STRIPE · CANCEL ANYTIME
+          SECURED BY STRIPE · LIVE MODE · CANCEL ANYTIME
         </div>
       </DialogContent>
     </Dialog>

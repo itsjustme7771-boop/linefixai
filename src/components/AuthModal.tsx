@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Mail, Lock, User, ArrowLeft, HardHat, Star, BarChart3 } from 'lucide-react';
+import { Mail, Lock, User, ArrowLeft, HardHat } from 'lucide-react';
 import { toast } from '@/components/ui/sonner';
-import { useAppContext, UserRole } from '@/contexts/AppContext';
+import { useAppContext } from '@/contexts/AppContext';
 import { hasSupabase, supabase } from '@/lib/supabase';
 
 type Mode = 'signin' | 'signup' | 'forgot';
@@ -19,10 +19,9 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
   const { signInWithPassword, signUpWithPassword, signInLocal } = useAppContext();
 
   const [mode, setMode] = useState<Mode>(initialMode);
-  const [role, setRole] = useState<UserRole>('technician');
+  const role = 'technician' as const;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -34,7 +33,6 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
       setMode(initialMode);
       setSubmitting(false);
       setError(null);
-      setInfo(null);
     }
     wasOpen.current = open;
   }, [open, initialMode]);
@@ -62,19 +60,18 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
   const handleSignUp = async () => {
     const { error: err } = await signUpWithPassword(email, password, name, role);
     if (err) {
+      // Supabase returns messaging like "check your email" via error, surface nicely
+      setError(err);
       setSubmitting(false);
       if (err.toLowerCase().includes('check your email')) {
-        setError(null);
-        setInfo(err);
         toast.success(err);
+        onClose();
       } else {
-        setInfo(null);
-        setError(err);
         toast.error(err);
       }
       return;
     }
-    toast.success(`Account created — ${role} tier`);
+    toast.success('Account created — technician access');
     finish(email.trim());
   };
 
@@ -103,7 +100,6 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
     e.stopPropagation();
     if (submitting) return;
     setError(null);
-    setInfo(null);
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) { toast.error('Please enter your email'); return; }
@@ -175,24 +171,9 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
           )}
 
           {mode === 'signup' && (
-            <div>
-              <div className="text-xs font-mono uppercase tracking-widest text-slate-400 mb-2">Select your role</div>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'technician' as const, label: 'Technician', icon: <HardHat className="w-4 h-4" /> },
-                  { id: 'lead' as const, label: 'Lead', icon: <Star className="w-4 h-4" /> },
-                  { id: 'management' as const, label: 'Mgmt', icon: <BarChart3 className="w-4 h-4" /> },
-                ].map(r => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => setRole(r.id)}
-                    className={`flex flex-col items-center gap-1 p-2 rounded-md border text-xs transition-colors ${role === r.id ? 'bg-[#ff6b35]/15 border-[#ff6b35] text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'}`}
-                  >
-                    {r.icon}{r.label}
-                  </button>
-                ))}
-              </div>
+            <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-slate-300">
+              <HardHat className="h-4 w-4 text-[#00d4ff]" />
+              New accounts start with Technician access. Leads and managers are assigned by an administrator.
             </div>
           )}
 
@@ -200,12 +181,6 @@ const AuthModal: React.FC<Props> = ({ open, onClose, initialMode = 'signin', onA
             <button type="button" onClick={() => setMode('forgot')} className="text-xs text-[#00d4ff] hover:underline">
               Forgot password?
             </button>
-          )}
-
-          {info && (
-            <div className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded px-3 py-2">
-              {info}
-            </div>
           )}
 
           {error && (

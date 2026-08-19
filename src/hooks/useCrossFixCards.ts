@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase, hasSupabase } from '@/lib/supabase';
-import { useAppContext } from '@/contexts/AppContext';
+import { supabase, hasSupabase, requireLineFixActor } from '@/lib/supabase';
 import { crossFixCards as mockCards } from '@/data/mockData';
 
 export interface CrossFixCard {
@@ -66,17 +65,9 @@ function mockToCards(): CrossFixCard[] {
 }
 
 export function useCrossFixCards() {
-  const { isAuthenticated, authLoading, authVersion } = useAppContext();
   const [cards, setCards] = useState<CrossFixCard[]>([]);
   const [loading, setLoading] = useState(false);
   const [live, setLive] = useState(false);
-
-  const normalize = (rows: any[]): CrossFixCard[] =>
-    rows.map((d) => ({
-      ...d,
-      parts: Array.isArray(d.parts) ? d.parts : [],
-      tags: Array.isArray(d.tags) ? d.tags : [],
-    })) as CrossFixCard[];
 
   const refresh = useCallback(async () => {
     if (!hasSupabase || !supabase) {
@@ -84,45 +75,38 @@ export function useCrossFixCards() {
       return;
     }
     setLoading(true);
-    let query = supabase
+    const { data, error } = await supabase
       .from('cross_fix_cards')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(100);
-
-    // Signed-out visitors only see approved fixes
-    if (!isAuthenticated) {
-      query = query.eq('status', 'approved');
-    }
-
-    const { data, error } = await query;
     setLoading(false);
     if (!error && data) {
-      setCards(normalize(data));
-    } else if (!isAuthenticated) {
-      setCards([]);
+      setCards(
+        data.map((d) => ({
+          ...d,
+          parts: Array.isArray(d.parts) ? d.parts : [],
+          tags: Array.isArray(d.tags) ? d.tags : [],
+        })) as CrossFixCard[],
+      );
     } else {
-      setCards(mockToCards());
+      // A configured production backend must fail closed. Never replace an
+      // authorization or network error with donor/demo records.
+      setCards([]);
     }
-  }, [isAuthenticated]);
+  }, []);
 
   useEffect(() => {
-    if (authLoading) return;
     refresh();
-  }, [refresh, authLoading, authVersion]);
-
-  useEffect(() => {
     if (!hasSupabase || !supabase) return;
 
-    const client = supabase;
-    // Unique channel per mount — avoids "cannot add callbacks after subscribe()"
-    // when React Strict Mode or hot reload re-runs this effect.
-    const channel = client
-      .channel(`cross_fix_cards_live_${crypto.randomUUID()}`)
+    // Realtime subscription — every plant sees inserts/updates instantly
+    const channel = supabase
+      .channel(`cross_fix_cards_live:${crypto.randomUUID()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'cross_fix_cards' },
-        (payload: any) => {
+        (payload) => {
           setCards((prev) => {
             if (payload.eventType === 'INSERT') {
               const row = payload.new as CrossFixCard;
@@ -139,7 +123,7 @@ export function useCrossFixCards() {
               );
             }
             if (payload.eventType === 'DELETE') {
-              return prev.filter((c) => c.id !== (payload.old as any).id);
+              return prev.filter((c) => c.id !== (payload.old as { id?: string }).id);
             }
             return prev;
           });
@@ -147,50 +131,58 @@ export function useCrossFixCards() {
       )
       .subscribe((status) => setLive(status === 'SUBSCRIBED'));
 
+    const { data: authSubscription } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        setCards([]);
+        setLive(false);
+        return;
+      }
+
+      void refresh();
+    });
+
     return () => {
-      void client.removeChannel(channel);
+      supabase.removeChannel(channel);
+      authSubscription.subscription.unsubscribe();
     };
-  }, []);
+  }, [refresh]);
 
   const submit = useCallback(
     async (draft: NewCrossFixCard) => {
-      if (hasSupabase && !isAuthenticated) {
-        throw new Error('Sign in to save Cross-Fix Cards');
-      }
-
-      const autoApprove = draft.author_role === 'lead' || draft.author_role === 'management';
-      const status = autoApprove ? 'approved' : 'pending';
+      const autoApprove = false;
+      const status = 'pending';
       const code = `CFX-${Date.now().toString().slice(-4)}`;
 
       if (hasSupabase && supabase) {
+        const actor = await requireLineFixActor();
         const { data, error } = await supabase
           .from('cross_fix_cards')
           .insert({
+            organization_id: actor.organizationId,
+            created_by: actor.userId,
             code,
             title: draft.title,
-            equipment_id: draft.equipment_id ?? null,
-            equipment_name: draft.equipment_name ?? null,
-            plant: draft.plant ?? null,
+            equipment_id: draft.equipment_id || 'Unspecified equipment',
+            equipment_name: draft.equipment_name || 'Unspecified equipment',
+            plant: draft.plant || 'Unspecified plant',
             author: draft.author,
             author_role: draft.author_role,
-            time_to_fix: draft.time_to_fix ?? null,
-            symptoms: draft.symptoms ?? null,
-            root_cause: draft.root_cause ?? null,
-            solution: draft.solution ?? null,
+            time_to_fix: draft.time_to_fix || '',
+            symptoms: draft.symptoms || '',
+            root_cause: draft.root_cause || '',
+            solution: draft.solution || 'Resolution recorded by technician',
             parts: draft.parts ?? [],
             tags: draft.tags ?? [],
             status,
             helpful: 0,
             source_session_id: draft.source_session_id ?? null,
-            approved_by: autoApprove ? draft.author : null,
-            approved_at: autoApprove ? new Date().toISOString() : null,
+            approved_by: null,
+            approved_at: null,
           })
           .select()
           .single();
         if (error) throw error;
-        const card = normalize([data])[0];
-        setCards((prev) => [card, ...prev.filter((c) => c.id !== card.id)]);
-        return { card, autoApproved: autoApprove };
+        return { card: data as CrossFixCard, autoApproved: autoApprove };
       }
 
       // Local fallback
@@ -219,24 +211,23 @@ export function useCrossFixCards() {
       setCards((prev) => [local, ...prev]);
       return { card: local, autoApproved: autoApprove };
     },
-    [isAuthenticated],
+    [],
   );
 
   const approve = useCallback(
     async (id: string, approver: string) => {
-      const approvedAt = new Date().toISOString();
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === id ? { ...c, status: 'approved', approved_by: approver, approved_at: approvedAt } : c,
-        ),
-      );
-
       if (hasSupabase && supabase) {
-        const { error } = await supabase
-          .from('cross_fix_cards')
-          .update({ status: 'approved', approved_by: approver, approved_at: approvedAt })
-          .eq('id', id);
+        const { error } = await supabase.rpc('review_cross_fix_card', {
+          card_id: id,
+          new_status: 'approved',
+        });
         if (error) throw error;
+      } else {
+        setCards((prev) =>
+          prev.map((c) =>
+            c.id === id ? { ...c, status: 'approved', approved_by: approver, approved_at: new Date().toISOString() } : c,
+          ),
+        );
       }
     },
     [],
@@ -244,24 +235,17 @@ export function useCrossFixCards() {
 
   const upvote = useCallback(
     async (id: string) => {
-      if (hasSupabase && !isAuthenticated) {
-        throw new Error('Sign in to mark cards as helpful');
-      }
-
-      let nextCount = 0;
-      setCards((prev) =>
-        prev.map((c) => {
-          if (c.id !== id) return c;
-          nextCount = c.helpful + 1;
-          return { ...c, helpful: nextCount };
-        }),
-      );
-
-      if (hasSupabase && supabase && nextCount > 0) {
-        await supabase.from('cross_fix_cards').update({ helpful: nextCount }).eq('id', id);
+      // optimistic
+      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, helpful: c.helpful + 1 } : c)));
+      if (hasSupabase && supabase) {
+        const { error } = await supabase.rpc('increment_cross_fix_helpful', { card_id: id });
+        if (error) {
+          setCards((prev) => prev.map((c) => (c.id === id ? { ...c, helpful: Math.max(0, c.helpful - 1) } : c)));
+          throw error;
+        }
       }
     },
-    [isAuthenticated],
+    [],
   );
 
   return { cards, loading, live, refresh, submit, approve, upvote };

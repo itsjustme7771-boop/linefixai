@@ -3,7 +3,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { BookmarkPlus, ShieldCheck, Lock } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
-import { hasSupabase } from '@/lib/supabase';
 import { useCrossFixCards, type NewCrossFixCard } from '@/hooks/useCrossFixCards';
 import { toast } from '@/components/ui/sonner';
 
@@ -26,7 +25,7 @@ interface Props {
 }
 
 const SaveCrossFixCardModal: React.FC<Props> = ({ open, onClose, prefill }) => {
-  const { role, userName, isAuthenticated } = useAppContext();
+  const { role, userName } = useAppContext();
   const { submit } = useCrossFixCards();
 
   const [title, setTitle] = useState(prefill.title);
@@ -53,10 +52,6 @@ const SaveCrossFixCardModal: React.FC<Props> = ({ open, onClose, prefill }) => {
   const canApprove = role === 'lead' || role === 'management';
 
   const handleSubmit = async () => {
-    if (hasSupabase && !isAuthenticated) {
-      toast.error('Sign in to save Cross-Fix Cards');
-      return;
-    }
     if (!title.trim()) {
       toast.error('Title is required');
       return;
@@ -85,11 +80,8 @@ const SaveCrossFixCardModal: React.FC<Props> = ({ open, onClose, prefill }) => {
           : 'Card submitted — awaiting Lead/Management approval',
       );
       onClose();
-      setTimeout(() => {
-        document.getElementById('crossfix')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 200);
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to save card');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save card');
     } finally {
       setSaving(false);
     }

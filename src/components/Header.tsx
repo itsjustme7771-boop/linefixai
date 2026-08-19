@@ -14,10 +14,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onSignIn, onSignUp, onScan, onNav }) => {
   const [open, setOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
-  const { isAuthenticated, user, signOut, role, authLoading } = useAppContext();
-  const subLabel = user?.subscriptionTier
-    ? `${user.subscriptionTier} plan`
-    : user?.subscriptionStatus === 'active' ? 'subscribed' : null;
+  const { isAuthenticated, user, signOut, role } = useAppContext();
 
   const links = [
     { id: 'diagnostic', label: 'Diagnostic' },
@@ -67,9 +64,7 @@ const Header: React.FC<HeaderProps> = ({ onSignIn, onSignUp, onScan, onNav }) =>
               <QrCode className="w-4 h-4 mr-2" /> Scan
             </Button>
 
-            {authLoading ? (
-              <div className="h-8 w-28 rounded-md bg-white/5 animate-pulse" />
-            ) : !isAuthenticated ? (
+            {!isAuthenticated ? (
               <>
                 <Button variant="ghost" size="sm" onClick={onSignIn} className="text-slate-200 hover:text-white hover:bg-white/5">
                   Sign In
@@ -90,9 +85,7 @@ const Header: React.FC<HeaderProps> = ({ onSignIn, onSignUp, onScan, onNav }) =>
                   </div>
                   <div className="text-left leading-tight">
                     <div className="text-xs text-white font-medium max-w-[140px] truncate">{user?.name || user?.email}</div>
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-[#00d4ff]">
-                      {role}{subLabel ? ` · ${subLabel}` : ''}
-                    </div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-[#00d4ff]">{role}</div>
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
                 </button>

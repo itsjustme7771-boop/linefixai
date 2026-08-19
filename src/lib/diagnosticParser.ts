@@ -11,12 +11,11 @@ export interface ParsedDiagnosis {
 }
 
 const SECTION_HEADERS = [
-  // Strict plant-floor format (OpenAI prompt) + markdown variants (Claude)
-  { key: 'safety', re: /^\s*(?:#{1,3}\s*)?1\.?\s*[—–-]?\s*SAFETY FIRST/im },
-  { key: 'causes', re: /^\s*(?:#{1,3}\s*)?2\.?\s*[—–-]?\s*(?:TOP\s*3\s*)?PROBABLE CAUSES/im },
-  { key: 'checks', re: /^\s*(?:#{1,3}\s*)?3\.?\s*[—–-]?\s*60-?\s*SECOND CHECK/im },
-  { key: 'steps', re: /^\s*(?:#{1,3}\s*)?4\.?\s*[—–-]?\s*STEP-?\s*BY-?\s*STEP(?:\s*RESOLUTION)?/im },
-  { key: 'feedback', re: /Did this fix the issue/im },
+  { key: 'safety', re: /^[ \t]*(?:#{1,6}[ \t]*)?(?:1[.)]?[ \t]*)?SAFETY FIRST[ \t]*$/im },
+  { key: 'causes', re: /^[ \t]*(?:#{1,6}[ \t]*)?(?:2[.)]?[ \t]*)?(?:MOST LIKELY CAUSES|TOP 3 PROBABLE CAUSES)[ \t]*$/im },
+  { key: 'checks', re: /^[ \t]*(?:#{1,6}[ \t]*)?(?:3[.)]?[ \t]*)?(?:FAST CHECKS|60-?SECOND CHECK(?:[ \t]*\(NO TOOLS\)|[ \t]*[—-][ \t]*NO TOOLS)?)[ \t]*$/im },
+  { key: 'steps', re: /^[ \t]*(?:#{1,6}[ \t]*)?(?:4[.)]?[ \t]*)?STEP-?BY-?STEP RESOLUTION[ \t]*$/im },
+  { key: 'feedback', re: /^[ \t]*(?:#{1,6}[ \t]*)?(?:5[.)]?[ \t]*)?VERIFICATION[ \t]*$/im },
 ] as const;
 
 function sliceSections(text: string): Record<string, string> {
@@ -43,9 +42,6 @@ function cleanBullet(line: string): string {
   return line
     .replace(/^\s*[-*•■]\s*/, '')
     .replace(/^\s*\d+[.)]\s*/, '')
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/\*\*/g, '')
-    .replace(/^#{1,6}\s*/, '')
     .trim();
 }
 
