@@ -39,6 +39,7 @@ Then I'll refine the diagnosis further.`;
 export interface StreamOptions {
   issue: string;
   equipmentId?: string;
+  imageDataUrl?: string;
   onToken: (chunk: string, full: string) => void;
   signal?: AbortSignal;
 }
@@ -58,11 +59,12 @@ export async function streamDiagnosis(opts: StreamOptions): Promise<StreamResult
   if (hasSupabase && DIAGNOSE_FN_URL) {
     return streamFromEdge(opts);
   }
+  if (opts.imageDataUrl) throw new Error('Photo diagnosis requires the live AI backend.');
   return streamMock(opts);
 }
 
 async function streamFromEdge(opts: StreamOptions): Promise<StreamResult> {
-  const { issue, equipmentId, onToken, signal } = opts;
+  const { issue, equipmentId, imageDataUrl, onToken, signal } = opts;
   if (!supabase) throw new Error('LineFix backend is not configured');
   const { data, error } = await supabase.auth.getSession();
   const accessToken = data.session?.access_token;
@@ -75,7 +77,7 @@ async function streamFromEdge(opts: StreamOptions): Promise<StreamResult> {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ issue, equipmentId }),
+    body: JSON.stringify({ issue, equipmentId, ...(imageDataUrl ? { imageDataUrl } : {}) }),
   });
 
   if (!res.ok || !res.body) {
