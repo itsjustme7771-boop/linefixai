@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Camera, Upload, MessageSquareText, ArrowLeft, Image as ImageIcon, ShieldAlert } from 'lucide-react';
 import DiagnosticDemo from '@/components/DiagnosticDemo';
+import { streamDiagnosis } from '@/lib/diagnosticStream';
+import { hasSupabase } from '@/lib/supabase';
 
 type Mode = 'choose' | 'photo' | 'diagnose';
 
@@ -10,6 +12,10 @@ const TechnicianStart: React.FC = () => {
   const [mode, setMode] = useState<Mode>('choose');
   const [photo, setPhoto] = useState<{ name: string; url: string } | null>(null);
   const [photoError, setPhotoError] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [issue, setIssue] = useState('');
+  const [result, setResult] = useState('');
+  const [running, setRunning] = useState(false);
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
 
@@ -17,16 +23,48 @@ const TechnicianStart: React.FC = () => {
     const file = files?.[0];
     if (!file) return;
     setPhotoError('');
-    if (!file.type.startsWith('image/')) {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       setPhotoError('Choose a photo file.');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setPhotoError('Choose a photo smaller than 10 MB.');
+    if (file.size > 4 * 1024 * 1024) {
+      setPhotoError('Choose a JPEG, PNG or WebP photo smaller than 4 MB.');
       return;
     }
+    setSelectedFile(file);
+    setResult('');
     setPhoto({ name: file.name, url: URL.createObjectURL(file) });
     setMode('photo');
+  };
+
+  const analyzePhoto = async () => {
+    if (!selectedFile || running) return;
+    if (!hasSupabase) {
+      setPhotoError('Live AI is not configured. Photo analysis is unavailable.');
+      return;
+    }
+    setPhotoError('');
+    setRunning(true);
+    setResult('');
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string'
+          ? resolve(reader.result)
+          : reject(new Error('Could not read photo'));
+        reader.onerror = () => reject(new Error('Could not read photo'));
+        reader.readAsDataURL(selectedFile);
+      });
+      await streamDiagnosis({
+        issue: issue.trim() || 'Inspect this equipment photograph. Report visible observations and ask for missing symptoms.',
+        imageDataUrl: dataUrl,
+        onToken: (_chunk, full) => setResult(full),
+      });
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : 'Photo analysis failed');
+    } finally {
+      setRunning(false);
+    }
   };
 
   return (
@@ -74,21 +112,31 @@ const TechnicianStart: React.FC = () => {
             <div className="flex items-center gap-2 text-[#00d4ff] font-semibold"><ImageIcon className="h-5 w-5" /> Photo selected</div>
             <img src={photo.url} alt="Selected equipment" className="mt-4 max-h-80 w-full rounded-lg object-contain bg-black/20" />
             <p className="mt-2 text-xs text-slate-400 break-all">{photo.name}</p>
-            <div className="mt-5 rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-              Photo analysis is not connected yet. This image remains on your device in this prototype and has not been sent to AI.
-              You can still describe the fault using the existing diagnostic engine.
-            </div>
+            <label htmlFor="photo-issue" className="mt-5 block text-sm text-slate-200">What's happening? (optional)</label>
+            <textarea id="photo-issue" value={issue} onChange={e => setIssue(e.target.value)}
+              placeholder="For example: conveyor won't start after washdown" maxLength={10000}
+              className="mt-2 min-h-24 w-full rounded-lg border border-white/20 bg-[#0b1220] p-3 text-white" />
+            <p className="mt-3 text-xs text-slate-400">When you choose Analyze photo, this image will be sent securely to the diagnostic AI. Only upload photos you're allowed to share. AI observations are not a verified diagnosis.</p>
             <div className="mt-5 flex flex-wrap gap-3">
-              <button onClick={() => setMode('diagnose')} className="rounded-lg bg-[#ff6b35] px-5 py-3 font-semibold hover:bg-[#ff8555]">Continue with description</button>
-              <button onClick={() => uploadRef.current?.click()} className="rounded-lg border border-white/20 px-5 py-3">Choose another photo</button>
+              <button onClick={analyzePhoto} disabled={running || !hasSupabase}
+                className="rounded-lg bg-[#ff6b35] px-5 py-3 font-semibold hover:bg-[#ff8555] disabled:opacity-50">
+                {running ? 'Analyzing…' : 'Analyze photo'}
+              </button>
+              <button onClick={() => uploadRef.current?.click()} disabled={running} className="rounded-lg border border-white/20 px-5 py-3">Choose another photo</button>
+              <button onClick={() => setMode('diagnose')} disabled={running} className="rounded-lg border border-white/20 px-5 py-3">Text diagnostics instead</button>
             </div>
+            {!hasSupabase && <p className="mt-3 text-amber-200">Live AI is not configured for this environment.</p>}
+            {result && <div role="status" aria-live="polite" className="mt-6 rounded-xl border border-white/15 bg-[#0b1220] p-5">
+              <h2 className="mb-3 font-bold text-[#00d4ff]">AI diagnostic guidance</h2>
+              <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-slate-100">{result}</pre>
+            </div>}
           </div>
         )}
 
         {mode === 'diagnose' && (
           <div>
             <button onClick={() => setMode(photo ? 'photo' : 'choose')} className="mb-3 flex items-center gap-2 text-sm text-[#00d4ff]"><ArrowLeft className="h-4 w-4" /> Back</button>
-            {photo && <p className="mb-3 rounded-lg border border-white/15 p-3 text-sm text-slate-300">Photo selected, but it will not be included in the AI diagnosis yet.</p>}
+            {photo && <p className="mb-3 rounded-lg border border-white/15 p-3 text-sm text-slate-300">Photo selected. Use Analyze photo on the previous screen for image-based guidance. Text diagnostics here do not include the image.</p>}
             <DiagnosticDemo />
           </div>
         )}
